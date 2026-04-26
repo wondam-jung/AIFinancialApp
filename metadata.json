@@ -1,0 +1,6 @@
+{
+  "name": "AI 가계부 (AI Financial Ledger)",
+  "description": "Gemini AI를 활용하여 소비 패턴을 분석하고 개인화된 재정 조언을 제공하는 스마트 가계부 서비스입니다.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
