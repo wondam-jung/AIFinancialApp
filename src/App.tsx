@@ -16,7 +16,8 @@ import {
   AlertCircle,
   CheckCircle2,
   Send,
-  FileUp
+  FileUp,
+  BarChart2
 } from 'lucide-react';
 import {
   BarChart,
@@ -88,11 +89,24 @@ interface Transaction {
   title: string;
 }
 
+interface MonthData {
+  monthKey: string;
+  label: string;
+  dateRangeLabel: string;
+  transactions: Transaction[];
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
-  const [isImported, setIsImported] = useState(false);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [insights, setInsights] = useState<Insight[]>([]);
+  const [monthlyHistory, setMonthlyHistory] = useState<MonthData[]>([]);
+  const [selectedMonthKey, setSelectedMonthKey] = useState<string | null>(null);
+  const transactions = useMemo(
+    () => monthlyHistory.find(m => m.monthKey === selectedMonthKey)?.transactions || [],
+    [monthlyHistory, selectedMonthKey]
+  );
+  const isImported = monthlyHistory.length > 0;
+  const [insightCache, setInsightCache] = useState<Record<string, Insight[]>>({});
+  const insights = selectedMonthKey ? (insightCache[selectedMonthKey] || []) : [];
   const [loadingInsights, setLoadingInsights] = useState(false);
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai', text: string }[]>([
     { role: 'ai', text: '안녕하세요! 당신의 소비 내역을 분석해 드릴까요? 엑셀 파일을 import 하거나 무엇이든 물어보세요.' }
@@ -101,6 +115,40 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const injectMockData = () => {
+    console.log('[Dev Mode] Injecting mock data...');
+    const mockMonth1: MonthData = {
+      monthKey: '2025-04',
+      label: '2025년 4월',
+      dateRangeLabel: '2025.04.01 ~ 2025.04.30',
+      transactions: [
+        { id: 1, date: '2025-04-01', category: '고정비', title: '월세', amount: -850000 },
+        { id: 2, date: '2025-04-02', category: '식비', title: '스타벅스', amount: -15000 },
+        { id: 3, date: '2025-04-03', category: '생필품비', title: '쿠팡', amount: -45000 },
+        { id: 4, date: '2025-04-04', category: '교통비', title: '택시', amount: -12000 },
+        { id: 5, date: '2025-04-05', category: '수입', title: '급여', amount: 3500000 },
+        { id: 6, date: '2025-04-12', category: '식비', title: '배달의민족', amount: -28000 },
+        { id: 7, date: '2025-04-15', category: '여가', title: '넷플릭스', amount: -17000 },
+        { id: 8, date: '2025-04-18', category: '꾸밈비', title: '올리브영', amount: -54000 },
+        { id: 9, date: '2025-04-20', category: '식비', title: '스타벅스', amount: -8000 },
+        { id: 10, date: '2025-04-22', category: '생필품비', title: '이마트', amount: -125000 },
+        { id: 11, date: '2025-04-25', category: '자기개발', title: '교보문고', amount: -22000 },
+        { id: 12, date: '2025-04-28', category: '교통비', title: '지하철', amount: -45000 }
+      ]
+    };
+
+    setMonthlyHistory([mockMonth1]);
+    setSelectedMonthKey('2025-04');
+    
+    setInsightCache({
+      '2025-04': [
+        { title: '[개발 모드] 지출 방어 성공!', content: '이번 달은 지난달보다 식비를 15% 줄였습니다.', type: 'success' },
+        { title: '[개발 모드] 구독 서비스 점검', content: '여가 카테고리의 넷플릭스 결제가 발생했습니다.', type: 'info' },
+        { title: '[개발 모드] 생필품 지출 경고', content: '이마트 등 생필품 지출 비중이 높습니다. 불필요한 소비가 없었는지 확인해보세요.', type: 'warning' }
+      ]
+    });
+  };
 
   const COLORS = ['#6366F1', '#10B981', '#F43F5E', '#F59E0B', '#0EA5E9', '#8B5CF6', '#F97316', '#EC4899', '#14B8A6', '#84CC16'];
   const analysis = useMemo(() => {
@@ -139,7 +187,35 @@ export default function App() {
 
     const dailyPattern = dayNames.map(name => ({ name, amount: dayMap[name] }));
 
-    console.log("Pie Chart Data (Category Stats):", categoryChartData);
+    // Top Merchants
+    const merchantMap: Record<string, { count: number; total: number }> = {};
+    transactions.filter(t => t.amount < 0 && t.category !== '수입').forEach(t => {
+      if (!merchantMap[t.title]) merchantMap[t.title] = { count: 0, total: 0 };
+      merchantMap[t.title].count += 1;
+      merchantMap[t.title].total += Math.abs(t.amount);
+    });
+    const topMerchants = Object.entries(merchantMap)
+      .map(([name, { count, total }]) => ({ name, count, total }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 3);
+
+    // Date range
+    const sortedDates = transactions
+      .map(t => t.date)
+      .filter(Boolean)
+      .sort();
+    const firstDate = sortedDates[0] || '';
+    const lastDate = sortedDates[sortedDates.length - 1] || '';
+    const fmtDate = (d: string) => {
+      if (!d) return '';
+      const [y, m, day] = d.split('-');
+      return `${y}.${m}.${day}`;
+    };
+    const dateRangeLabel = firstDate && lastDate
+      ? firstDate === lastDate
+        ? fmtDate(firstDate)
+        : `${fmtDate(firstDate)} ~ ${fmtDate(lastDate)}`
+      : '';
 
     return {
       totalIncome: income,
@@ -148,15 +224,17 @@ export default function App() {
       totalCount: transactions.length,
       avgCountPerDay: (transactions.length / dayCount).toFixed(1),
       categoryChartData,
-      dailyPattern
+      dailyPattern,
+      topMerchants,
+      dateRangeLabel
     };
   }, [transactions]);
 
   useEffect(() => {
-    if (isImported && transactions.length > 0) {
-      fetchInsights(transactions);
+    if (selectedMonthKey && transactions.length > 0 && !insightCache[selectedMonthKey] && !loadingInsights) {
+      fetchInsights(selectedMonthKey, transactions);
     }
-  }, [isImported, transactions]);
+  }, [selectedMonthKey, transactions.length, insightCache, loadingInsights]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -172,8 +250,21 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [activeTab, isImported]);
 
-  const fetchInsights = async (data: Transaction[]) => {
+  const fetchInsights = async (monthKey: string, data: Transaction[]) => {
     setLoadingInsights(true);
+
+    if (import.meta.env.DEV) {
+      setTimeout(() => {
+        setInsightCache(prev => ({ ...prev, [monthKey]: [
+          { title: '[개발 모드] 지출 방어 성공!', content: '이번 달은 지난달보다 식비를 15% 줄였습니다.', type: 'success' },
+          { title: '[개발 모드] 구독 서비스 점검', content: '여가 카테고리의 넷플릭스 결제가 발생했습니다.', type: 'info' },
+          { title: '[개발 모드] 생필품 지출 경고', content: '생필품 지출 비중이 높습니다. 불필요한 소비가 없었는지 확인해보세요.', type: 'warning' }
+        ]}));
+        setLoadingInsights(false);
+      }, 800);
+      return;
+    }
+
     const modelsToTry = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"];
     let lastError = null;
 
@@ -195,31 +286,38 @@ export default function App() {
         const text = response.text.trim();
         const result = JSON.parse(text);
         if (result.insights) {
-          setInsights(result.insights);
+          setInsightCache(prev => ({ ...prev, [monthKey]: result.insights }));
           setLoadingInsights(false);
           return;
         }
-      } catch (error) {
-        console.warn(`Model ${modelName} failed:`, error);
+      } catch (error: any) {
         lastError = error;
+        if (error?.status === 429 || error?.message?.includes('429') || error?.message?.includes('quota')) {
+          console.log('[Info] AI API Rate limit reached. Using fallback insights.');
+          break; // Stop trying other models if rate limited
+        } else {
+          console.warn(`Model ${modelName} failed:`, error);
+        }
       }
     }
 
-    setInsights([
+    setInsightCache(prev => ({ ...prev, [monthKey]: [
       { title: '지출 분석 완료', content: '데이터 분석 중 일시적인 오류가 발생했습니다. 기본 분석 결과를 확인해주세요.', type: 'info' },
       { title: '식비 주의', content: '외식 지출이 높은 편입니다.', type: 'warning' },
-    ]);
+    ]}));
     setLoadingInsights(false);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Reset input value so same file can be re-selected
+    e.target.value = '';
 
     const reader = new FileReader();
+    setIsAnalyzing(true);
     reader.onload = async (evt) => {
       try {
-        setIsAnalyzing(true);
         const bstr = evt.target?.result;
         const wb = read(bstr, { type: 'binary', cellDates: true });
         const wsname = wb.SheetNames[0];
@@ -230,32 +328,73 @@ export default function App() {
 
         // 1. Single AI Analysis Call (Mapping + Categorization Rules)
         let aiConfig = null;
-        const aiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"];
-        const sampleRows = rawRows.slice(0, 15);
-        const uniqueTitlesSample = Array.from(new Set(rawRows.slice(1).map(r => r.find(c => typeof c === 'string' && c.length > 1)).filter(Boolean))).slice(0, 100);
+        
+        if (import.meta.env.DEV) {
+          console.log('[Dev Mode] Skipping AI API call for file upload. Using mock categories.');
+          aiConfig = {
+            mapping: null,
+            categories: {
+              "월세": "고정비", "관리비": "고정비", "가스요금": "고정비", "전기요금": "고정비",
+              "쿠팡": "생필품비", "이마트": "생필품비", "다이소": "생필품비", "네이버": "생필품비",
+              "맥도날드": "식비", "스타벅스": "식비", "배달의민족": "식비", "식당": "식비", "카페": "식비",
+              "급여": "수입", "용돈": "수입", "보너스": "수입", "월급": "수입",
+              "교통카드": "교통비", "택시": "교통비", "버스": "교통비", "지하철": "교통비", "주유": "교통비",
+              "넷플릭스": "고정비", "유튜브": "고정비", "통신비": "고정비",
+              "올리브영": "꾸밈비", "미용실": "꾸밈비", "옷": "꾸밈비",
+              "병원": "의료", "약국": "의료", "치과": "의료",
+              "영화": "여가", "게임": "여가", "도서": "자기개발", "학원": "자기개발"
+            }
+          };
+          await new Promise(resolve => setTimeout(resolve, 800)); // Simulate delay
+        } else {
+          const aiModels = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"];
+          const sampleRows = rawRows.slice(0, 15);
+          const uniqueTitlesSample = Array.from(new Set(rawRows.slice(1).map(r => r.find(c => typeof c === 'string' && c.length > 1)).filter(Boolean))).slice(0, 100);
 
-        for (const modelName of aiModels) {
-          try {
-            const prompt = `당신은 금융 데이터 전문가입니다. 다음 엑셀 샘플을 분석하여 두 가지 작업을 수행하세요.
-            1. 컬럼 매핑: 날짜, 항목명, 금액이 들어있는 인덱스(0부터)를 찾으세요. { "dateIdx": n, "titleIdx": n, "amountIdx": n, "withdrawalIdx": n, "depositIdx": n }
-            2. 카테고리 분류 규칙: 다음 항목 리스트를 보고 가장 적합한 카테고리를 JSON 맵으로 만드세요. 
-               카테고리는 반드시 다음 목록 중에서만 선택하세요: [고정비, 교통비, 생필품비, 식비, 자기개발, 여가, 꾸밈비, 의료, 관계비, 경조사비, 이벤트비, 수입, 기타]
-               '기타'는 정말 분류가 불가능한 경우에만 사용하세요.
-            
-            데이터 샘플: ${JSON.stringify(sampleRows)}
-            항목 리스트: ${JSON.stringify(uniqueTitlesSample)}
-            
-            반드시 다음 형식의 JSON으로만 응답하세요:
-            { "mapping": { "dateIdx": 0, "titleIdx": 1, ... }, "categories": { "스타벅스": "식비", "통신비": "고정비", "헬스장": "자기개발", ... } }`;
+          for (const modelName of aiModels) {
+            try {
+              const prompt = `당신은 금융 데이터 전문가입니다. 다음 엑셀 샘플을 분석하여 두 가지 작업을 수행하세요.
+              1. 컬럼 매핑: 날짜, 항목명, 금액이 들어있는 인덱스(0부터)를 찾으세요. { "dateIdx": n, "titleIdx": n, "amountIdx": n, "withdrawalIdx": n, "depositIdx": n }
+              2. 카테고리 분류 규칙: 다음 항목 리스트를 보고 가장 적합한 카테고리를 JSON 맵으로 만드세요. 
+                 카테고리는 반드시 다음 목록 중에서만 선택하세요: [고정비, 교통비, 생필품비, 식비, 자기개발, 여가, 꾸밈비, 의료, 관계비, 경조사비, 이벤트비, 수입, 기타]
+                 '기타'는 정말 분류가 불가능한 경우에만 사용하세요.
+              
+              데이터 샘플: ${JSON.stringify(sampleRows)}
+              항목 리스트: ${JSON.stringify(uniqueTitlesSample)}
+              
+              반드시 다음 형식의 JSON으로만 응답하세요:
+              { "mapping": { "dateIdx": 0, "titleIdx": 1, ... }, "categories": { "스타벅스": "식비", "통신비": "고정비", "헬스장": "자기개발", ... } }`;
 
-            const response = await ai.models.generateContent({
-              model: modelName,
-              contents: prompt,
-              config: { responseMimeType: "application/json" }
-            });
-            aiConfig = JSON.parse(response.text.trim());
-            break;
-          } catch (e) { console.warn(`Model ${modelName} failed:`, e); }
+              const response = await ai.models.generateContent({
+                model: modelName,
+                contents: prompt,
+                config: { responseMimeType: "application/json" }
+              });
+              aiConfig = JSON.parse(response.text.trim());
+              break;
+            } catch (e: any) { 
+              if (e?.status === 429 || e?.message?.includes('429') || e?.message?.includes('quota')) {
+                console.log('[Info] AI API Rate limit reached. Using mock categorization fallback.');
+                aiConfig = {
+                  mapping: null,
+                  categories: {
+                    "월세": "고정비", "관리비": "고정비", "가스요금": "고정비", "전기요금": "고정비",
+                    "쿠팡": "생필품비", "이마트": "생필품비", "다이소": "생필품비", "네이버": "생필품비",
+                    "맥도날드": "식비", "스타벅스": "식비", "배달의민족": "식비", "식당": "식비", "카페": "식비",
+                    "급여": "수입", "용돈": "수입", "보너스": "수입", "월급": "수입",
+                    "교통카드": "교통비", "택시": "교통비", "버스": "교통비", "지하철": "교통비", "주유": "교통비",
+                    "넷플릭스": "고정비", "유튜브": "고정비", "통신비": "고정비",
+                    "올리브영": "꾸밈비", "미용실": "꾸밈비", "옷": "꾸밈비",
+                    "병원": "의료", "약국": "의료", "치과": "의료",
+                    "영화": "여가", "게임": "여가", "도서": "자기개발", "학원": "자기개발"
+                  }
+                };
+                break; // Stop trying other models if rate limited
+              } else {
+                console.warn(`Model ${modelName} failed:`, e); 
+              }
+            }
+          }
         }
 
         // 2. Data Processing
@@ -266,7 +405,7 @@ export default function App() {
             return cleaned ? Number(cleaned) : 0;
           };
 
-          let dateVal, titleVal, amount = 0, category = '기타';
+          let dateVal, titleVal, amount = 0;
 
           if (aiConfig?.mapping) {
             const m = aiConfig.mapping;
@@ -274,8 +413,6 @@ export default function App() {
             titleVal = m.titleIdx !== null ? row[m.titleIdx] : '항목 없음';
             if (m.amountIdx !== null && m.amountIdx !== undefined) {
               amount = parseNum(row[m.amountIdx]);
-              // If amount is positive but it's a common withdrawal merchant, consider it negative
-              // Or if both withdrawalIdx and depositIdx are null, we trust amountIdx sign
             }
 
             // Priority for dedicated columns
@@ -284,13 +421,21 @@ export default function App() {
             } else if (m.depositIdx !== null && m.depositIdx !== undefined && row[m.depositIdx]) {
               amount = Math.abs(parseNum(row[m.depositIdx]));
             }
-
-            category = aiConfig.categories?.[String(titleVal)] || '기타';
           } else {
             // Manual Fallback
-            dateVal = row.find(c => c instanceof Date || (typeof c === 'string' && /^\d{4}/.test(c)));
-            titleVal = row.find(c => typeof c === 'string' && c.length > 1) || '항목 없음';
-            amount = Number(row.find(c => typeof c === 'number' && c !== 0) || 0);
+            dateVal = row.find(c => c instanceof Date || (typeof c === 'string' && (c.includes('-') || c.includes('.'))));
+            titleVal = row.find(c => typeof c === 'string' && c.length > 1 && isNaN(parseNum(c)) && c !== dateVal) || '항목 없음';
+            const nums = row.map(parseNum).filter(n => n !== 0 && !isNaN(n));
+            amount = nums.length > 0 ? nums[nums.length - 1] : 0;
+          }
+
+          let category = '기타';
+          if (aiConfig?.categories) {
+            const titleStr = String(titleVal).trim();
+            // Try exact match first, then partial match
+            category = aiConfig.categories[titleStr] 
+               || Object.entries(aiConfig.categories).find(([k]) => titleStr.includes(k))?.[1] 
+               || '기타';
           }
 
           let d = new Date(dateVal || new Date());
@@ -306,9 +451,32 @@ export default function App() {
         if (mappedData.length === 0) {
           alert("데이터를 분석할 수 없습니다.");
         } else {
-          console.log("Categorized as '기타':", mappedData.filter(t => t.category === '기타').map(t => t.title));
-          setTransactions(mappedData);
-          setIsImported(true);
+          // Detect dominant month from data
+          const monthCounts: Record<string, number> = {};
+          mappedData.forEach(t => {
+            const k = t.date.substring(0, 7);
+            monthCounts[k] = (monthCounts[k] || 0) + 1;
+          });
+          const monthKey = Object.entries(monthCounts).sort((a, b) => b[1] - a[1])[0]?.[0]
+            || new Date().toISOString().substring(0, 7);
+          const [y, m] = monthKey.split('-');
+          const label = `${y}년 ${parseInt(m)}월`;
+
+          // Compute actual date range from data
+          const sortedDates = mappedData.map(t => t.date).filter(Boolean).sort();
+          const fmtD = (d: string) => { const [yy, mm, dd] = d.split('-'); return `${yy}.${mm}.${dd}`; };
+          const dateRangeLabel = sortedDates.length > 0
+            ? sortedDates[0] === sortedDates[sortedDates.length - 1]
+              ? fmtD(sortedDates[0])
+              : `${fmtD(sortedDates[0])} ~ ${fmtD(sortedDates[sortedDates.length - 1])}`
+            : label;
+
+          setMonthlyHistory(prev => {
+            const next = prev.filter(p => p.monthKey !== monthKey);
+            return [...next, { monthKey, label, dateRangeLabel, transactions: mappedData }]
+              .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+          });
+          setSelectedMonthKey(monthKey);
         }
       } catch (err) {
         console.error("Critical Parsing Error:", err);
@@ -348,6 +516,18 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-[#111827] font-sans selection:bg-[#F3F4F6]">
+      {/* Global Loading Overlay */}
+      {isAnalyzing && (
+        <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex flex-col items-center justify-center">
+          <div className="bg-white rounded-3xl p-10 flex flex-col items-center gap-6 shadow-2xl max-w-xs w-full mx-4">
+            <div className="w-16 h-16 border-4 border-gray-100 border-t-black rounded-full animate-spin" />
+            <div className="text-center">
+              <p className="font-bold text-[#111827] text-lg mb-1">AI 분석 중...</p>
+              <p className="text-sm text-[#6B7280]">거래 데이터를 파악하고 카테고리를 분류하고 있어요.</p>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Sidebar / Nav */}
       <nav className="fixed bottom-0 left-0 right-0 lg:top-0 lg:bottom-0 lg:left-0 lg:w-[260px] bg-white border-t lg:border-t-0 lg:border-r border-[#E5E7EB] z-50 p-6 flex lg:flex-col justify-around lg:justify-start gap-1">
         <div className="hidden lg:flex items-center gap-3 mb-12 px-2">
@@ -359,7 +539,6 @@ export default function App() {
 
         {[
           { id: 'overview', icon: TrendingUp, label: 'Overview' },
-          { id: 'analytics', icon: PieChartIcon, label: 'Analytics' },
           { id: 'chat', icon: MessageSquare, label: 'AI Advisor' },
           { id: 'settings', icon: Settings, label: 'Settings', disabled: true },
         ].map((item) => (
@@ -392,6 +571,14 @@ export default function App() {
 
       {/* Main Content */}
       <main className="lg:ml-[260px] pb-24 lg:pb-0">
+        {/* Always-mounted hidden file input */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileUpload}
+          accept=".xlsx, .xls, .csv"
+          className="hidden"
+        />
         {/* Header */}
         <header className="sticky top-0 bg-[#F9FAFB]/90 backdrop-blur-md z-40 p-6 lg:p-10 flex items-center justify-between">
           <div>
@@ -439,16 +626,9 @@ export default function App() {
                           엑셀 파일을 업로드하면 AI가 즉시 카테고리를 분류하고 당신의 소비 패턴을 아름답게 분석합니다.
                         </p>
 
-                        <div className="flex flex-col items-center gap-8">
-                          <input
-                            type="file"
-                            ref={fileInputRef}
-                            onChange={handleFileUpload}
-                            accept=".xlsx, .xls, .csv"
-                            className="hidden"
-                          />
+                        <div className="flex flex-col items-center gap-4">
                           <button
-                            onClick={() => fileInputRef.current?.click()}
+                            onClick={() => { if (fileInputRef.current) { fileInputRef.current.value = ''; fileInputRef.current.click(); } }}
                             disabled={isAnalyzing}
                             className={cn(
                               "group relative w-full sm:w-auto px-12 py-5 bg-black text-white rounded-2xl font-bold flex items-center justify-center gap-3 overflow-hidden transition-all hover:shadow-xl active:scale-[0.98]",
@@ -469,7 +649,16 @@ export default function App() {
                             )}
                           </button>
 
-                          <div className="flex items-center gap-8 text-[10px] uppercase tracking-[0.2em] font-black text-gray-300">
+                          {import.meta.env.DEV && (
+                            <button
+                              onClick={injectMockData}
+                              className="mt-2 text-sm font-medium text-indigo-500 hover:text-indigo-700 transition-colors underline underline-offset-4"
+                            >
+                              [개발 모드] 가짜 데이터로 채우기
+                            </button>
+                          )}
+
+                          <div className="flex items-center gap-8 text-[10px] uppercase tracking-[0.2em] font-black text-gray-300 mt-4">
                             <span>Excel Support</span>
                             <span className="w-1 h-1 bg-gray-300 rounded-full" />
                             <span>AI Categorization</span>
@@ -485,16 +674,48 @@ export default function App() {
                     <div className="flex items-center justify-between">
                       <div>
                         <h2 className="text-2xl font-bold tracking-tight text-[#111827]">Financial Summary</h2>
-                        <p className="text-sm text-[#6B7280] font-light">분석된 기간 동안의 재정 현황 요약입니다.</p>
+                        <p className="text-sm text-[#6B7280] font-light">
+                          {analysis?.dateRangeLabel
+                            ? `📅 데이터 기간: ${analysis.dateRangeLabel}`
+                            : '분석된 기간 동안의 재정 현황 요약입니다.'}
+                        </p>
                       </div>
                       <button
-                        onClick={() => fileInputRef.current?.click()}
-                        className="group p-3 hover:bg-black hover:text-white border border-gray-100 rounded-2xl transition-all duration-300 shadow-sm"
-                        title="다른 파일 업로드"
+                        onClick={() => { if (fileInputRef.current) { fileInputRef.current.value = ''; fileInputRef.current.click(); } }}
+                        className="group flex items-center gap-2 px-4 py-2.5 hover:bg-black hover:text-white text-gray-600 border border-gray-200 rounded-2xl transition-all duration-300 shadow-sm text-sm font-medium"
+                        title="월별 파일 추가"
                       >
-                        <FileUp className="w-5 h-5" />
+                        <FileUp className="w-4 h-4" />
+                        <span>파일 추가</span>
                       </button>
                     </div>
+
+                    {/* Month Tabs */}
+                    {monthlyHistory.length > 0 && (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {monthlyHistory.map(m => (
+                          <button
+                            key={m.monthKey}
+                            onClick={() => { setSelectedMonthKey(m.monthKey); }}
+                            className={cn(
+                              "px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200 flex flex-col items-start text-left",
+                              selectedMonthKey === m.monthKey
+                                ? "bg-black text-white shadow-md"
+                                : "bg-white border border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-800"
+                            )}
+                          >
+                            <span>{m.label}</span>
+                            <span className={cn(
+                              "text-[10px] font-normal mt-0.5",
+                              selectedMonthKey === m.monthKey ? "text-gray-300" : "text-gray-400"
+                            )}>{m.dateRangeLabel}</span>
+                          </button>
+                        ))}
+                        {monthlyHistory.length > 1 && (
+                          <span className="text-xs text-gray-400 ml-2">{monthlyHistory.length}개월 로드됨</span>
+                        )}
+                      </div>
+                    )}
 
                     {/* Enhanced Metrics */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -537,59 +758,204 @@ export default function App() {
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-                      {/* Weekly Consumption Chart */}
-                      <div className="space-y-6">
-                        <div className="flex items-center gap-3">
+                      {/* Category Chart */}
+                      <div className="bg-white p-8 rounded-[2rem] border border-[#F3F4F6] shadow-sm flex flex-col">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="w-10 h-10 bg-rose-50 rounded-2xl flex items-center justify-center shadow-sm">
+                            <PieChartIcon className="w-5 h-5 text-rose-500" />
+                          </div>
+                          <div>
+                            <h2 className="text-lg font-bold text-[#111827]">카테고리별 지출</h2>
+                            <p className="text-xs text-[#6B7280]">가장 큰 비중을 차지하는 항목을 확인하세요.</p>
+                          </div>
+                        </div>
+                        <div className="h-[250px] w-full">
+                          {chartReady && (
+                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                              <PieChart>
+                                <Pie
+                                  data={analysis?.categoryChartData}
+                                  innerRadius={60}
+                                  outerRadius={90}
+                                  paddingAngle={5}
+                                  dataKey="value"
+                                  stroke="none"
+                                  onClick={(data) => setSelectedCategory(data.name)}
+                                  style={{ cursor: 'pointer' }}
+                                >
+                                  {(analysis?.categoryChartData || []).map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                  ))}
+                                </Pie>
+                                <Tooltip formatter={(value) => value.toLocaleString() + '원'} />
+                              </PieChart>
+                            </ResponsiveContainer>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-6">
+                          {(analysis?.categoryChartData || []).slice(0, 6).map((item, idx) => (
+                            <div key={idx} className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
+                                <span className="text-xs text-[#6B7280]">{item.name}</span>
+                              </div>
+                              <span className="text-xs font-semibold">{item.percent}%</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Category Details */}
+                      <div className="bg-white p-8 rounded-[2rem] border border-[#F3F4F6] shadow-sm flex flex-col">
+                        <div className="flex items-center justify-between mb-6">
+                          <div>
+                            <h2 className="text-lg font-bold text-[#111827]">{selectedCategory || analysis?.categoryChartData?.[0]?.name || '카테고리'} 상세 내역</h2>
+                            <p className="text-xs text-[#6B7280]">차트를 클릭하여 변경하세요.</p>
+                          </div>
+                        </div>
+                        <div className="flex-1 max-h-[350px] overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                          {(() => {
+                            const targetCat = selectedCategory || analysis?.categoryChartData?.[0]?.name;
+                            const filtered = transactions.filter(t => t.amount < 0 && t.category === targetCat);
+                            return filtered.length > 0 ? (
+                              filtered.map((t, idx) => (
+                                <div key={idx} className="flex items-center justify-between p-4 rounded-xl bg-gray-50 border border-gray-100">
+                                  <div>
+                                    <p className="text-sm font-semibold text-gray-800">{t.title}</p>
+                                    <p className="text-[11px] text-gray-500 mt-1">{t.date}</p>
+                                  </div>
+                                  <p className="text-sm font-bold text-rose-600">
+                                    {Math.abs(t.amount).toLocaleString()}원
+                                  </p>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-xs text-gray-400 text-center py-10">내역이 없습니다.</p>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                      {/* Daily Pattern Chart */}
+                      <div className="bg-white p-8 rounded-[2rem] border border-[#F3F4F6] shadow-sm flex flex-col">
+                        <div className="flex items-center gap-3 mb-6">
                           <div className="w-10 h-10 bg-indigo-50 rounded-2xl flex items-center justify-center shadow-sm">
                             <TrendingUp className="w-5 h-5 text-indigo-500" />
                           </div>
                           <div>
-                            <h2 className="text-lg font-bold text-[#111827]">주간 지출 추이</h2>
-                            <p className="text-xs text-[#6B7280]">최근 7일간의 소비 변화입니다.</p>
+                            <h2 className="text-lg font-bold text-[#111827]">요일별 소비 패턴</h2>
+                            <p className="text-xs text-[#6B7280]">지출이 가장 많은 요일을 확인하세요.</p>
                           </div>
                         </div>
-                        <div className="bg-white p-8 rounded-[2rem] border border-[#F3F4F6] shadow-sm">
-                          <div className="h-[300px] w-full">
-                            {chartReady && (
-                              <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={analysis?.dailyPattern || []}>
-                                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
-                                  <XAxis
-                                    dataKey="name"
-                                    axisLine={false}
-                                    tickLine={false}
-                                    tick={{ fontSize: 12, fill: '#9CA3AF', fontWeight: 500 }}
-                                  />
-                                  <YAxis hide />
-                                  <Tooltip
-                                    formatter={(value: number) => value.toLocaleString() + '원'}
-                                    contentStyle={{
-                                      borderRadius: '16px',
-                                      border: 'none',
-                                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
-                                      padding: '12px'
-                                    }}
-                                    cursor={{ fill: '#F9FAFB' }}
-                                  />
-                                  <Bar
-                                    dataKey="amount"
-                                    name="소비 금액"
-                                    fill="#111827"
-                                    radius={[6, 6, 0, 0]}
-                                    barSize={24}
-                                  />
-                                </BarChart>
-                              </ResponsiveContainer>
-                            )}
+                        <div className="h-[250px] w-full">
+                          {chartReady && (
+                            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                              <BarChart data={analysis?.dailyPattern || []}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
+                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#9CA3AF' }} />
+                                <YAxis hide />
+                                <Tooltip formatter={(value) => value.toLocaleString() + '원'} cursor={{ fill: '#F9FAFB' }} />
+                                <Bar
+                                  dataKey="amount"
+                                  name="소비 금액"
+                                  radius={[6, 6, 0, 0]}
+                                  barSize={32}
+                                  onClick={(data) => setSelectedDay(data.name)}
+                                  style={{ cursor: 'pointer' }}
+                                >
+                                  {(analysis?.dailyPattern || []).map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                  ))}
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Daily Pattern Details */}
+                      <div className="bg-white p-8 rounded-[2rem] border border-[#F3F4F6] shadow-sm flex flex-col">
+                        <div className="flex items-center justify-between mb-6">
+                          <div>
+                            <h2 className="text-lg font-bold text-[#111827]">{selectedDay || '일'}요일 상세 내역</h2>
+                            <p className="text-xs text-[#6B7280]">차트를 클릭하여 요일을 변경하세요.</p>
                           </div>
+                        </div>
+                        <div className="flex-1 max-h-[350px] overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                          {(() => {
+                            const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+                            const targetDay = selectedDay || dayNames[new Date().getDay()];
+                            const filtered = transactions.filter(t => {
+                              const d = new Date(t.date);
+                              return t.amount < 0 && dayNames[d.getDay()] === targetDay;
+                            });
+
+                            return filtered.length > 0 ? (
+                              filtered.map((t, idx) => (
+                                <div key={idx} className="flex items-center justify-between p-4 rounded-xl bg-gray-50 border border-gray-100">
+                                  <div>
+                                    <p className="text-sm font-semibold text-gray-800">{t.title}</p>
+                                    <p className="text-[11px] text-gray-500 mt-1">{t.date}</p>
+                                  </div>
+                                  <p className="text-sm font-bold text-rose-600">
+                                    {Math.abs(t.amount).toLocaleString()}원
+                                  </p>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-xs text-gray-400 text-center py-10">해당 요일에 지출 내역이 없습니다.</p>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                      {/* Top Merchants */}
+                      <div className="bg-white p-8 rounded-[2rem] border border-[#F3F4F6] shadow-sm">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="w-10 h-10 bg-amber-50 rounded-2xl flex items-center justify-center shadow-sm">
+                            <Zap className="w-5 h-5 text-amber-500 fill-amber-500" />
+                          </div>
+                          <div>
+                            <h2 className="text-lg font-bold text-[#111827]">주요 거래처 Top 3</h2>
+                            <p className="text-xs text-[#6B7280]">가장 많이 지출한 가맹점입니다.</p>
+                          </div>
+                        </div>
+                        <div className="space-y-4">
+                          {(analysis?.topMerchants || []).map((merchant, idx) => (
+                            <div key={idx} className="flex items-center gap-5 p-5 rounded-2xl bg-gray-50/80 border border-gray-100 hover:border-gray-200 hover:bg-gray-50 transition-all">
+                              <div className={cn(
+                                "w-12 h-12 rounded-2xl flex items-center justify-center text-white font-black text-lg flex-shrink-0",
+                                idx === 0 ? 'bg-amber-400' : idx === 1 ? 'bg-gray-400' : 'bg-orange-400'
+                              )}>
+                                {idx + 1}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-bold text-[#111827] truncate">{merchant.name}</p>
+                                <p className="text-xs text-[#6B7280] mt-0.5">{merchant.count}회 방문</p>
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <p className="font-bold text-[#111827]">{merchant.total.toLocaleString()}원</p>
+                                <p className="text-xs text-rose-400 font-medium mt-0.5">
+                                  {analysis?.totalExpense ? Math.round((merchant.total / analysis.totalExpense) * 100) : 0}%
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                          {(!analysis?.topMerchants || analysis.topMerchants.length === 0) && (
+                            <p className="text-sm text-gray-400 text-center py-8">거래 데이터가 없습니다.</p>
+                          )}
                         </div>
                       </div>
 
                       {/* AI Insights Panel */}
-                      <div className="space-y-8">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-amber-50 rounded-2xl flex items-center justify-center shadow-sm">
-                            <Zap className="w-5 h-5 text-amber-500 fill-amber-500" />
+                      <div className="bg-white p-8 rounded-[2rem] border border-[#F3F4F6] shadow-sm flex flex-col h-full">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="w-10 h-10 bg-indigo-50 rounded-2xl flex items-center justify-center shadow-sm">
+                            <Lightbulb className="w-5 h-5 text-indigo-500" />
                           </div>
                           <div>
                             <h2 className="text-lg font-bold text-[#111827]">AI 소비 분석 리포트</h2>
@@ -604,7 +970,7 @@ export default function App() {
                           )}
                         </div>
 
-                        <div className="grid grid-cols-1 gap-4">
+                        <div className="grid grid-cols-1 gap-4 flex-1">
                           {insights.length > 0 ? insights.map((insight, idx) => (
                             <div key={idx} className="bg-white p-6 rounded-[1.5rem] border border-[#F3F4F6] flex gap-5 items-start shadow-sm hover:shadow-md transition-all duration-300 group">
                               <div className={cn(
@@ -627,7 +993,7 @@ export default function App() {
                               </div>
                             </div>
                           )) : (
-                            <div className="p-12 text-center bg-gray-50/50 rounded-[2rem] border border-dashed border-gray-200">
+                            <div className="p-12 text-center bg-gray-50/50 rounded-[2rem] border border-dashed border-gray-200 h-full flex flex-col items-center justify-center">
                               <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-sm">
                                 <Lightbulb className="w-6 h-6 text-gray-300" />
                               </div>
@@ -643,17 +1009,16 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="bg-white rounded-[2rem] border border-[#F3F4F6] shadow-sm overflow-hidden">
+                    <div className="bg-white rounded-[2rem] border border-[#F3F4F6] shadow-sm overflow-hidden mt-10">
                       <div className="p-6 border-b border-[#F3F4F6] flex items-center justify-between">
                         <div>
                           <h2 className="text-lg font-bold text-[#111827]">최근 거래 내역</h2>
-                          <p className="text-xs text-[#6B7280]">최근 5개의 거래를 먼저 보여드립니다.</p>
+                          <p className="text-xs text-[#6B7280]">가장 최근의 10개 거래를 보여드립니다.</p>
                         </div>
-                        <ChevronRight className="w-5 h-5 text-gray-300" />
                       </div>
 
                       <div className="divide-y divide-[#F3F4F6]">
-                        {transactions.slice(0, 5).map((tx) => (
+                        {transactions.slice(0, 10).map((tx) => (
                           <div key={tx.id} className="p-6 flex items-center justify-between hover:bg-gray-50/50 transition-colors group">
                             <div className="flex items-center gap-5">
                               <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center text-2xl shadow-sm group-hover:scale-110 transition-transform duration-300">
@@ -677,217 +1042,8 @@ export default function App() {
                           </div>
                         ))}
                       </div>
-
-                      <div className="p-4 bg-gray-50/50 text-center">
-                        <button onClick={() => setActiveTab('analytics')} className="text-xs font-bold text-gray-400 hover:text-black transition-colors uppercase tracking-widest">
-                          모든 내역 보기
-                        </button>
-                      </div>
                     </div>
                   </div>
-                )}
-              </motion.div>
-            )}
-
-            {activeTab === 'analytics' && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.98 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.98 }}
-                className="space-y-10"
-              >
-                {!isImported ? (
-                  <div className="p-20 text-center bg-white rounded-3xl border border-dashed border-[#E5E7EB]">
-                    <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                      <PieChartIcon className="w-8 h-8 text-[#9CA3AF]" />
-                    </div>
-                    <h3 className="text-lg font-semibold mb-2">분석할 데이터가 없습니다</h3>
-                    <p className="text-sm text-[#6B7280] mb-8">오버뷰 탭에서 엑셀 파일을 먼저 import 해주세요.</p>
-                    <button
-                      onClick={() => setActiveTab('overview')}
-                      className="px-6 py-3 bg-black text-white rounded-xl text-sm font-medium hover:opacity-90 transition-all"
-                    >
-                      오버뷰로 이동하기
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                      {[
-                        { label: '총 수입', value: analysis?.totalIncome, color: 'text-green-600' },
-                        { label: '총 지출', value: analysis?.totalExpense, color: 'text-red-600' },
-                        { label: '순 저축', value: analysis?.netSavings, color: 'text-blue-600' },
-                        { label: '거래 건수', value: analysis?.totalCount, unit: '건' },
-                        { label: '일 평균 거래', value: analysis?.avgCountPerDay, unit: '건' }
-                      ].map((item, idx) => (
-                        <div key={idx} className="bg-white p-6 rounded-2xl border border-[#F3F4F6] shadow-sm">
-                          <p className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider mb-2">{item.label}</p>
-                          <p className={cn("text-2xl font-bold tracking-tight", item.color)}>
-                            {typeof item.value === 'number' ? item.value.toLocaleString() : item.value}
-                            <span className="text-sm ml-1 font-normal text-gray-500">{item.unit || '원'}</span>
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full">
-                      <div className="bg-white p-10 rounded-2xl border border-[#F3F4F6] flex flex-col items-center shadow-sm w-full">
-                        <h3 className="text-sm font-semibold uppercase tracking-wider text-[#6B7280] mb-10 self-start">카테고리별 지출 비중</h3>
-                        <div className="h-[300px] w-full" style={{ minHeight: '300px' }}>
-                          {chartReady && (
-                            <ResponsiveContainer width="100%" height="100%">
-                              <PieChart>
-                                <Pie
-                                  data={analysis?.categoryChartData}
-                                  innerRadius={70}
-                                  outerRadius={100}
-                                  paddingAngle={10}
-                                  dataKey="value"
-                                  stroke="none"
-                                  onClick={(data) => setSelectedCategory(data.name)}
-                                  style={{ cursor: 'pointer' }}
-                                >
-                                  {analysis?.categoryChartData.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                  ))}
-                                </Pie>
-                                <Tooltip formatter={(value: number) => value.toLocaleString() + '원'} />
-                              </PieChart>
-                            </ResponsiveContainer>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-2 gap-x-8 gap-y-4 w-full mt-10">
-                          {analysis?.categoryChartData.map((item, idx) => (
-                            <div key={idx} className="flex items-center justify-between border-b border-gray-50 pb-2">
-                              <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
-                                <span className="text-xs text-[#6B7280]">{item.name}</span>
-                              </div>
-                              <span className="text-xs font-semibold">{item.percent}%</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="bg-white p-8 rounded-2xl border border-[#F3F4F6] shadow-sm flex flex-col w-full">
-                        <div className="flex items-center justify-between mb-6">
-                          <h2 className="text-sm font-semibold uppercase tracking-wider text-[#6B7280]">
-                            {selectedCategory || analysis?.categoryChartData[0]?.name} 상세 내역
-                          </h2>
-                          <span className="text-xs text-gray-400">차트를 클릭하여 카테고리를 변경하세요</span>
-                        </div>
-
-                        <div className="flex-1 max-h-[400px] overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                          {transactions.filter(t => t.amount < 0 && t.category === (selectedCategory || analysis?.categoryChartData[0]?.name)).length > 0 ? (
-                            transactions.filter(t => t.amount < 0 && t.category === (selectedCategory || analysis?.categoryChartData[0]?.name)).map((t, idx) => (
-                              <div key={idx} className="flex items-center justify-between p-4 rounded-xl bg-gray-50 border border-gray-100 hover:border-gray-200 transition-colors">
-                                <div>
-                                  <p className="text-xs font-semibold text-gray-800">{t.title}</p>
-                                  <p className="text-[10px] text-gray-500">{t.date}</p>
-                                </div>
-                                <p className="text-xs font-bold text-red-600">
-                                  {t.amount.toLocaleString()}원
-                                </p>
-                              </div>
-                            ))
-                          ) : (
-                            <p className="text-xs text-gray-400 text-center py-20">해당 카테고리에 내역이 없습니다.</p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 w-full">
-                      <div className="bg-white p-10 rounded-2xl border border-[#F3F4F6] shadow-sm flex flex-col w-full">
-                        <h3 className="text-sm font-semibold uppercase tracking-wider text-[#6B7280] mb-10">요일별 소비 패턴</h3>
-                        <div className="h-[250px] w-full" style={{ minHeight: '250px' }}>
-                          {chartReady && (
-                            <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={analysis?.dailyPattern}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F3F4F6" />
-                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#9CA3AF' }} />
-                                <YAxis hide />
-                                <Tooltip formatter={(value: number) => value.toLocaleString() + '원'} cursor={{ fill: '#F9FAFB' }} />
-                                <Bar
-                                  dataKey="amount"
-                                  name="소비 금액"
-                                  radius={[4, 4, 0, 0]}
-                                  barSize={32}
-                                  onClick={(data) => setSelectedDay(data.name)}
-                                  style={{ cursor: 'pointer' }}
-                                >
-                                  {analysis?.dailyPattern.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                  ))}
-                                </Bar>
-                              </BarChart>
-                            </ResponsiveContainer>
-                          )}
-                        </div>
-                        <div className="mt-auto pt-8 border-t border-gray-50">
-                          <p className="text-sm text-[#111827] font-medium mb-2">오늘의 분석</p>
-                          <p className="text-xs text-[#6B7280] leading-relaxed">
-                            가장 지출이 많은 요일은 <span className="font-bold text-black">{
-                              [...(analysis?.dailyPattern || [])].sort((a, b) => b.amount - a.amount)[0]?.name
-                            }요일</span> 입니다.
-                            주말 지출 관리에 유의하시면 목표 저축액 달성에 큰 도움이 될 것 같습니다.
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="bg-white p-8 rounded-2xl border border-[#F3F4F6] shadow-sm flex flex-col w-full">
-                        <div className="flex items-center justify-between mb-6">
-                          <h2 className="text-sm font-semibold uppercase tracking-wider text-[#6B7280]">
-                            {selectedDay || '일'}요일 상세 내역
-                          </h2>
-                          <span className="text-xs text-gray-400">차트를 클릭하여 요일을 변경하세요</span>
-                        </div>
-
-                        <div className="flex-1 max-h-[400px] overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                          {(() => {
-                            const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
-                            const targetDay = selectedDay || dayNames[new Date().getDay()];
-                            const filtered = transactions.filter(t => {
-                              const d = new Date(t.date);
-                              return t.amount < 0 && dayNames[d.getDay()] === targetDay;
-                            });
-
-                            return filtered.length > 0 ? (
-                              filtered.map((t, idx) => (
-                                <div key={idx} className="flex items-center justify-between p-4 rounded-xl bg-gray-50 border border-gray-100 hover:border-gray-200 transition-colors">
-                                  <div>
-                                    <p className="text-xs font-semibold text-gray-800">{t.title}</p>
-                                    <p className="text-[10px] text-gray-500">{t.date}</p>
-                                  </div>
-                                  <p className="text-xs font-bold text-red-600">
-                                    {t.amount.toLocaleString()}원
-                                  </p>
-                                </div>
-                              ))
-                            ) : (
-                              <p className="text-xs text-gray-400 text-center py-20">해당 요일에 지출 내역이 없습니다.</p>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-gray-900 p-8 rounded-2xl text-white">
-                      <p className="text-xs opacity-60 uppercase font-bold tracking-widest mb-4">AI Analysis Strategy</p>
-                      <h3 className="text-xl font-medium leading-tight mb-4">지출 최적화 전략</h3>
-                      <div className="space-y-3">
-                        <div className="flex gap-3 items-start">
-                          <div className="w-5 h-5 bg-white/10 rounded-full flex items-center justify-center flex-shrink-0 text-[10px]">1</div>
-                          <p className="text-xs opacity-80 leading-normal">상위 3개 카테고리 지출이 전체의 {
-                            analysis?.categoryChartData.slice(0, 3).reduce((acc, curr) => acc + curr.percent, 0)
-                          }%를 차지합니다.</p>
-                        </div>
-                        <div className="flex gap-3 items-start">
-                          <div className="w-5 h-5 bg-white/10 rounded-full flex items-center justify-center flex-shrink-0 text-[10px]">2</div>
-                        </div>
-                      </div>
-                    </div>
-                  </>
                 )}
               </motion.div>
             )}
