@@ -29,7 +29,8 @@ import {
   ResponsiveContainer,
   PieChart,
   Pie,
-  Cell
+  Cell,
+  Legend
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -113,6 +114,8 @@ export default function App() {
   ]);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [trendInsight, setTrendInsight] = useState<{ summary: string; tips: string[] } | null>(null);
+  const [loadingTrendInsight, setLoadingTrendInsight] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -138,7 +141,34 @@ export default function App() {
       ]
     };
 
-    setMonthlyHistory([mockMonth1]);
+    const mockMonth2: MonthData = {
+      monthKey: '2025-03',
+      label: '2025년 3월',
+      dateRangeLabel: '2025.03.01 ~ 2025.03.31',
+      transactions: [
+        { id: 101, date: '2025-03-01', category: '고정비', title: '월세', amount: -850000 },
+        { id: 102, date: '2025-03-05', category: '수입', title: '급여', amount: 3500000 },
+        { id: 103, date: '2025-03-10', category: '식비', title: '배달의민족', amount: -45000 },
+        { id: 104, date: '2025-03-12', category: '생필품비', title: '쿠팡', amount: -85000 },
+        { id: 105, date: '2025-03-20', category: '식비', title: '스타벅스', amount: -25000 },
+        { id: 106, date: '2025-03-25', category: '여가', title: '영화관', amount: -30000 },
+      ]
+    };
+
+    const mockMonth3: MonthData = {
+      monthKey: '2025-02',
+      label: '2025년 2월',
+      dateRangeLabel: '2025.02.01 ~ 2025.02.28',
+      transactions: [
+        { id: 201, date: '2025-02-01', category: '고정비', title: '월세', amount: -850000 },
+        { id: 202, date: '2025-02-05', category: '수입', title: '급여', amount: 3500000 },
+        { id: 203, date: '2025-02-08', category: '식비', title: '식당', amount: -150000 },
+        { id: 204, date: '2025-02-14', category: '여가', title: '호텔', amount: -250000 },
+        { id: 205, date: '2025-02-28', category: '생필품비', title: '이마트', amount: -65000 },
+      ]
+    };
+
+    setMonthlyHistory([mockMonth3, mockMonth2, mockMonth1]);
     setSelectedMonthKey('2025-04');
     
     setInsightCache({
@@ -230,6 +260,55 @@ export default function App() {
     };
   }, [transactions]);
 
+  const monthlyTrendsData = useMemo(() => {
+    return monthlyHistory.map(m => {
+      const income = m.transactions.filter(t => t.amount > 0).reduce((acc, t) => acc + t.amount, 0);
+      const expense = Math.abs(m.transactions.filter(t => t.amount < 0).reduce((acc, t) => acc + t.amount, 0));
+      return {
+        month: m.monthKey,
+        label: m.label,
+        수입: income,
+        지출: expense,
+        저축: income - expense
+      };
+    }).sort((a, b) => a.month.localeCompare(b.month));
+  }, [monthlyHistory]);
+
+  const overallTrends = useMemo(() => {
+    let totalIncome = 0;
+    let totalExpense = 0;
+    const catMap: Record<string, number> = {};
+
+    monthlyHistory.forEach(m => {
+      m.transactions.forEach(t => {
+        if (t.amount > 0) totalIncome += t.amount;
+        if (t.amount < 0) {
+          totalExpense += Math.abs(t.amount);
+          if (t.category !== '수입') {
+            catMap[t.category] = (catMap[t.category] || 0) + Math.abs(t.amount);
+          }
+        }
+      });
+    });
+
+    const categoryStats = Object.entries(catMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
+    const totalCatExpense = categoryStats.reduce((acc, curr) => acc + curr.value, 0);
+    const categoryChartData = categoryStats.map(cat => ({
+      ...cat,
+      percent: totalCatExpense > 0 ? Math.round((cat.value / totalCatExpense) * 100) : 0
+    }));
+
+    return {
+      totalIncome,
+      totalExpense,
+      netSavings: totalIncome - totalExpense,
+      categoryChartData
+    };
+  }, [monthlyHistory]);
+
   useEffect(() => {
     if (selectedMonthKey && transactions.length > 0 && !insightCache[selectedMonthKey] && !loadingInsights) {
       fetchInsights(selectedMonthKey, transactions);
@@ -307,6 +386,74 @@ export default function App() {
     ]}));
     setLoadingInsights(false);
   };
+
+  const fetchTrendInsights = async () => {
+    if (trendInsight || loadingTrendInsight || monthlyTrendsData.length === 0) return;
+    setLoadingTrendInsight(true);
+
+    if (import.meta.env.DEV) {
+      setTimeout(() => {
+        setTrendInsight({
+          summary: "전체적으로 식비 비중이 가장 높으며, 최근 3개월간 지출이 소폭 증가하는 추세입니다.",
+          tips: [
+            "배달의민족, 외식 등 불필요한 식비를 주 1회 줄이는 것을 목표로 해보세요.",
+            "고정비 중 안 쓰는 구독 서비스(넷플릭스 등)가 있는지 정기적으로 점검하세요."
+          ]
+        });
+        setLoadingTrendInsight(false);
+      }, 1000);
+      return;
+    }
+
+    const modelsToTry = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"];
+    for (const modelName of modelsToTry) {
+      try {
+        const prompt = `당신은 전문 재무 관리사입니다. 다음은 사용자의 월별 수입/지출 트렌드 요약 데이터입니다.
+        데이터: ${JSON.stringify(monthlyTrendsData)}
+        
+        이 데이터를 바탕으로 두 가지를 분석해주세요:
+        1. "summary": 전체적인 소비 패턴과 수입/지출 트렌드 요약 (2-3문장 내외, 존댓말 사용)
+        2. "tips": 즉각적으로 실행 가능한 구체적인 지출 절감 방법 2-3가지 (배열 형태)
+        
+        결과는 반드시 JSON 형식으로만 응답하세요:
+        { "summary": "요약 내용...", "tips": ["팁1", "팁2"] }`;
+
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: { responseMimeType: "application/json" }
+        });
+
+        const text = response.text.trim();
+        const result = JSON.parse(text);
+        if (result.summary && result.tips) {
+          setTrendInsight(result);
+          setLoadingTrendInsight(false);
+          return;
+        }
+      } catch (e: any) {
+        if (e?.status === 429 || e?.message?.includes('429') || e?.message?.includes('quota')) {
+           console.log('[Info] AI API Rate limit reached for trends.');
+           break;
+        } else {
+           console.warn(`Model ${modelName} failed:`, e);
+        }
+      }
+    }
+    
+    // Fallback if all fail or rate limited
+    setTrendInsight({
+      summary: "전체적으로 밸런스 있는 지출을 유지하고 있으나, 특정 카테고리의 비중이 다소 높습니다.",
+      tips: ["외식 횟수 줄이기", "안 쓰는 구독 서비스 해지하기", "충동 구매 예산 한도 정하기"]
+    });
+    setLoadingTrendInsight(false);
+  };
+
+  useEffect(() => {
+    if (activeTab === 'trends' && monthlyTrendsData.length > 0 && !trendInsight && !loadingTrendInsight) {
+      fetchTrendInsights();
+    }
+  }, [activeTab, monthlyTrendsData.length, trendInsight, loadingTrendInsight]);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -539,6 +686,7 @@ export default function App() {
 
         {[
           { id: 'overview', icon: TrendingUp, label: 'Overview' },
+          { id: 'trends', icon: BarChart2, label: 'Trends' },
           { id: 'chat', icon: MessageSquare, label: 'AI Advisor' },
           { id: 'settings', icon: Settings, label: 'Settings', disabled: true },
         ].map((item) => (
@@ -1042,6 +1190,186 @@ export default function App() {
                           </div>
                         ))}
                       </div>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {activeTab === 'trends' && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-8"
+              >
+                {!isImported ? (
+                  <div className="min-h-[60vh] flex flex-col items-center justify-center py-12 px-6">
+                    <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-6">
+                      <BarChart2 className="w-10 h-10 text-gray-400" />
+                    </div>
+                    <h2 className="text-xl font-bold text-[#111827] mb-2">데이터가 없습니다</h2>
+                    <p className="text-[#6B7280]">엑셀 파일을 업로드하여 트렌드를 확인해보세요.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-8">
+                    {/* Overall Summary Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="bg-white p-6 rounded-[2rem] border border-[#F3F4F6] shadow-sm flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-[#6B7280] mb-1 font-medium">총 수입</p>
+                          <h3 className="text-2xl font-bold text-[#111827]">{overallTrends.totalIncome.toLocaleString()}원</h3>
+                        </div>
+                        <div className="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center">
+                          <TrendingUp className="w-6 h-6 text-emerald-500" />
+                        </div>
+                      </div>
+                      <div className="bg-white p-6 rounded-[2rem] border border-[#F3F4F6] shadow-sm flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-[#6B7280] mb-1 font-medium">총 지출</p>
+                          <h3 className="text-2xl font-bold text-[#111827]">{overallTrends.totalExpense.toLocaleString()}원</h3>
+                        </div>
+                        <div className="w-12 h-12 rounded-full bg-rose-50 flex items-center justify-center">
+                          <TrendingDown className="w-6 h-6 text-rose-500" />
+                        </div>
+                      </div>
+                      <div className="bg-white p-6 rounded-[2rem] border border-[#F3F4F6] shadow-sm flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-[#6B7280] mb-1 font-medium">순 저축</p>
+                          <h3 className={cn("text-2xl font-bold", overallTrends.netSavings >= 0 ? "text-indigo-600" : "text-rose-600")}>
+                            {overallTrends.netSavings > 0 ? '+' : ''}{overallTrends.netSavings.toLocaleString()}원
+                          </h3>
+                        </div>
+                        <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center">
+                          <Wallet className="w-6 h-6 text-indigo-500" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-8 rounded-[2rem] border border-[#F3F4F6] shadow-sm">
+                      <div className="mb-8">
+                        <h2 className="text-xl font-bold text-[#111827]">월별 입출금 추이</h2>
+                        <p className="text-sm text-[#6B7280] mt-1">업로드된 모든 데이터의 전체 흐름을 한눈에 파악하세요.</p>
+                      </div>
+                      <div className="h-[400px] w-full">
+                        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                          <BarChart data={monthlyTrendsData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                            <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#6B7280' }} dy={10} />
+                            <YAxis 
+                              axisLine={false} 
+                              tickLine={false} 
+                              tick={{ fontSize: 12, fill: '#6B7280' }}
+                              tickFormatter={(value) => `${(value / 10000).toLocaleString()}만`}
+                            />
+                            <Tooltip
+                              contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)', padding: '16px' }}
+                              formatter={(value: number) => [`${value.toLocaleString()}원`]}
+                            />
+                            <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                            <Bar dataKey="수입" fill="#10B981" radius={[6, 6, 0, 0]} maxBarSize={60} />
+                            <Bar dataKey="지출" fill="#F43F5E" radius={[6, 6, 0, 0]} maxBarSize={60} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-8 rounded-[2rem] border border-[#F3F4F6] shadow-sm">
+                      <div className="mb-6">
+                        <h2 className="text-xl font-bold text-[#111827]">누적 카테고리별 지출</h2>
+                        <p className="text-sm text-[#6B7280] mt-1">전체 기간 동안의 지출 비율입니다.</p>
+                      </div>
+                      <div className="flex flex-col md:flex-row items-center gap-8">
+                        <div className="w-[240px] h-[240px] flex-shrink-0 relative">
+                          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                            <PieChart>
+                              <Pie
+                                data={overallTrends.categoryChartData}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={70}
+                                outerRadius={90}
+                                dataKey="value"
+                                stroke="none"
+                              >
+                                {overallTrends.categoryChartData.map((entry, index) => (
+                                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                ))}
+                              </Pie>
+                              <Tooltip
+                                contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+                                formatter={(value: number) => `${value.toLocaleString()}원`}
+                              />
+                            </PieChart>
+                          </ResponsiveContainer>
+                          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                            <span className="text-sm text-[#6B7280]">총 지출</span>
+                            <span className="text-lg font-bold text-[#111827]">
+                              {overallTrends.categoryChartData.length > 0 ? '100%' : '0%'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex-1 w-full grid grid-cols-2 gap-x-4 gap-y-4">
+                          {overallTrends.categoryChartData.slice(0, 8).map((item, idx) => (
+                            <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors">
+                              <div className="flex items-center gap-3">
+                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
+                                <span className="text-sm font-medium text-[#111827]">{item.name}</span>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-sm font-bold text-[#111827]">{item.percent}%</div>
+                                <div className="text-xs text-[#6B7280]">{item.value.toLocaleString()}원</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-8 rounded-[2rem] border border-[#F3F4F6] shadow-sm">
+                      <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center">
+                          <Zap className="w-5 h-5 text-indigo-600" />
+                        </div>
+                        <div>
+                          <h2 className="text-xl font-bold text-[#111827]">AI 트렌드 요약 & 절약 솔루션</h2>
+                          <p className="text-sm text-[#6B7280]">전체적인 소비 패턴을 분석하여 맞춤형 조언을 제공합니다.</p>
+                        </div>
+                      </div>
+
+                      {loadingTrendInsight ? (
+                        <div className="flex flex-col items-center justify-center py-12">
+                          <div className="w-8 h-8 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin mb-4" />
+                          <p className="text-sm text-[#6B7280] font-medium">전체 지출 트렌드를 분석하고 있어요...</p>
+                        </div>
+                      ) : trendInsight ? (
+                        <div className="space-y-6">
+                          <div className="bg-indigo-50/50 p-5 rounded-2xl border border-indigo-100/50 relative overflow-hidden">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500" />
+                            <p className="text-[#111827] leading-relaxed text-[15px] font-medium pl-2">{trendInsight.summary}</p>
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-bold text-[#111827] mb-4 flex items-center gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                              지출 절감을 위한 액션 플랜
+                            </h3>
+                            <div className="space-y-3">
+                              {trendInsight.tips.map((tip, idx) => (
+                                <div key={idx} className="flex gap-4 items-start bg-gray-50 p-4 rounded-xl border border-gray-100/50">
+                                  <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <span className="text-emerald-700 text-xs font-bold">{idx + 1}</span>
+                                  </div>
+                                  <p className="text-[14px] text-[#374151] pt-0.5 leading-relaxed font-medium">{tip}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="py-8 text-center">
+                          <p className="text-sm text-[#6B7280]">트렌드 분석 데이터가 부족합니다.</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
